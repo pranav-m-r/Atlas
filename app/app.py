@@ -1,6 +1,6 @@
 """
-Camera-Robust Desk Posture + Focus Monitor
-Uses MoveNet + Body-Centric Torso Frame
+Live Desk Posture + Focus Monitor
+Camera-placement robust (body-centric torso frame)
 """
 
 import cv2
@@ -11,37 +11,33 @@ import time
 import math
 
 # ============================================================
-# ======================= CONFIG =============================
+# ========================= CONFIG ============================
 # ============================================================
 
-# ---- Camera ----
 WIDTH = 640
 HEIGHT = 480
 FRAMERATE = 30
 
-# ---- Confidence ----
 MIN_KP_CONF = 0.4
 
-# ---- Timing (seconds) ----
 BAD_POSTURE_ALERT_TIME = 10.0
 SEATED_ALERT_TIME = 45 * 60
 FOCUS_MIN_TIME = 5 * 60
 
-# ---- Posture thresholds ----
-NECK_FLEX_BAD = 18.0          # degrees (relative to torso)
-TORSO_COMP_BAD = 1.6          # torso height / shoulder width
-TORSO_ROLL_BAD = 12.0         # degrees
+NECK_FLEX_BAD = 18.0
+TORSO_COMP_BAD = 1.6
+TORSO_ROLL_BAD = 12.0
 
-# ---- Focus ----
-HEAD_MOVEMENT_THRESH = 3.0    # degrees
+HEAD_MOVEMENT_THRESH = 3.0
 
-# ---- Scoring weights ----
 W_NECK = 0.4
 W_TORSO = 0.4
 W_ROLL = 0.2
 
+os.environ['DISPLAY']=':0'
+
 # ============================================================
-# ===================== GEOMETRY ==============================
+# ========================= UTILS =============================
 # ============================================================
 
 def valid(kp):
@@ -51,6 +47,15 @@ def valid(kp):
 def midpoint(p1, p2):
     return ((p1[0] + p2[0]) / 2, (p1[1] + p2[1]) / 2)
 
+
+def draw_text(frame, text, x, y, color=(255,255,255), scale=0.6):
+    cv2.putText(frame, text, (x, y),
+                cv2.FONT_HERSHEY_SIMPLEX, scale, color, 2)
+
+
+# ============================================================
+# ==================== BODY FRAME =============================
+# ============================================================
 
 def torso_frame(keypoints):
     l_sh, r_sh = keypoints[5][:2], keypoints[6][:2]
@@ -74,34 +79,27 @@ def to_torso_coords(point, origin, x_axis, y_axis):
 
 
 # ============================================================
-# ================== POSTURE FEATURES ========================
+# =================== POSTURE FEATURES ========================
 # ============================================================
 
 def neck_flexion(keypoints):
-    if not all(valid(keypoints[i]) for i in [0, 5, 6, 11, 12]):
+    if not all(valid(keypoints[i]) for i in [0,5,6,11,12]):
         return None
-
     origin, x_axis, y_axis = torso_frame(keypoints)
     nose = keypoints[0][:2]
-    vec = to_torso_coords(nose, origin, x_axis, y_axis)
-
-    return abs(math.degrees(math.atan2(vec[0], vec[1])))
+    v = to_torso_coords(nose, origin, x_axis, y_axis)
+    return abs(math.degrees(math.atan2(v[0], v[1])))
 
 
 def torso_compression(keypoints):
     l_sh, r_sh = keypoints[5][:2], keypoints[6][:2]
     l_hip, r_hip = keypoints[11][:2], keypoints[12][:2]
-
-    shoulder_width = np.linalg.norm(np.array(l_sh) - np.array(r_sh))
-    torso_height = np.linalg.norm(
+    shoulder_w = np.linalg.norm(np.array(l_sh) - np.array(r_sh))
+    torso_h = np.linalg.norm(
         np.array(midpoint(l_sh, r_sh)) -
         np.array(midpoint(l_hip, r_hip))
     )
-
-    if shoulder_width == 0:
-        return None
-
-    return torso_height / shoulder_width
+    return torso_h / shoulder_w if shoulder_w > 0 else None
 
 
 def torso_roll(keypoints):
@@ -124,11 +122,12 @@ def posture_score(keypoints):
     comp = torso_compression(keypoints)
     roll = torso_roll(keypoints)
 
-    s = (
-        W_NECK * subscore(neck, NECK_FLEX_BAD) +
-        W_TORSO * subscore(comp, TORSO_COMP_BAD, invert=True) +
-        W_ROLL * subscore(roll, TORSO_ROLL_BAD)
-    ) * 100
+    s_neck = subscore(neck, NECK_FLEX_BAD)
+    s_torso = subscore(comp, TORSO_COMP_BAD, invert=True)
+    s_roll = subscore(roll, TORSO_ROLL_BAD)
+
+    score = (W_NECK*s_neck + W_TORSO*s_torso + W_ROLL*s_roll) * 100
+    classification = "GOOD" if score >= 60 else "BAD"
 
     reasons = []
     if neck and neck > NECK_FLEX_BAD:
@@ -138,11 +137,20 @@ def posture_score(keypoints):
     if roll > TORSO_ROLL_BAD:
         reasons.append("Lateral Lean")
 
-    return s, reasons
+    return {
+        "score": score,
+        "classification": classification,
+        "subscores": {
+            "Neck": s_neck*100,
+            "Torso": s_torso*100,
+            "Roll": s_roll*100
+        },
+        "reasons": reasons
+    }
 
 
 # ============================================================
-# ==================== MONITOR ================================
+# ===================== MONITOR ==============================
 # ============================================================
 
 class PostureMonitor:
@@ -154,16 +162,16 @@ class PostureMonitor:
 
     def update(self, keypoints):
         now = time.time()
-        score, reasons = posture_score(keypoints)
+        data = posture_score(keypoints)
 
-        bad = score < 60
+        bad = data["score"] < 60
         if bad:
             self.bad_start = self.bad_start or now
         else:
             self.bad_start = None
 
-        bad_alert = self.bad_start and now - self.bad_start > BAD_POSTURE_ALERT_TIME
-        seated_alert = now - self.seated_start > SEATED_ALERT_TIME
+        bad_alert = self.bad_start and (now - self.bad_start > BAD_POSTURE_ALERT_TIME)
+        seated_alert = (now - self.seated_start) > SEATED_ALERT_TIME
 
         neck = neck_flexion(keypoints)
         focused = False
@@ -171,9 +179,9 @@ class PostureMonitor:
             if self.last_head and abs(neck - self.last_head) > HEAD_MOVEMENT_THRESH:
                 self.last_move = now
             self.last_head = neck
-            focused = now - self.last_move > FOCUS_MIN_TIME
+            focused = (now - self.last_move) > FOCUS_MIN_TIME
 
-        return score, reasons, bad_alert, seated_alert, focused
+        return data, bad_alert, seated_alert, focused
 
 
 # ============================================================
@@ -193,21 +201,20 @@ def preprocess(frame, size):
 
 
 def infer(interp, inp):
-    inp_i = interp.get_input_details()[0]["index"]
-    out_i = interp.get_output_details()[0]["index"]
-    interp.set_tensor(inp_i, inp)
+    i = interp.get_input_details()[0]["index"]
+    o = interp.get_output_details()[0]["index"]
+    interp.set_tensor(i, inp)
     interp.invoke()
-    return interp.get_tensor(out_i)[0][0]
+    return interp.get_tensor(o)[0][0]
 
 
 # ============================================================
-# ======================== MAIN ===============================
+# ========================= MAIN ==============================
 # ============================================================
 
 def main():
     interpreter = load_model("model.tflite")
     input_size = interpreter.get_input_details()[0]["shape"][1]
-
     monitor = PostureMonitor()
 
     cmd = [
@@ -216,42 +223,48 @@ def main():
         "--height", str(HEIGHT), "--framerate", str(FRAMERATE),
         "-o", "-"
     ]
-
-    process = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
     frame_size = WIDTH * HEIGHT * 3 // 2
 
     while True:
-        raw = process.stdout.read(frame_size)
+        raw = proc.stdout.read(frame_size)
         if len(raw) != frame_size:
             break
 
-        yuv = np.frombuffer(raw, np.uint8).reshape((HEIGHT * 3 // 2, WIDTH))
+        yuv = np.frombuffer(raw, np.uint8).reshape((HEIGHT*3//2, WIDTH))
         frame = cv2.cvtColor(yuv, cv2.COLOR_YUV2BGR_I420)
 
         keypoints = infer(interpreter, preprocess(frame, input_size))
-        score, reasons, bad_alert, seat_alert, focused = monitor.update(keypoints)
+        data, bad_alert, seat_alert, focused = monitor.update(keypoints)
 
-        color = (0, 255, 0) if score >= 60 else (0, 0, 255)
-        cv2.putText(frame, f"Score: {int(score)}", (10, 40),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+        # ===== LIVE OVERLAY =====
+        color = (0,255,0) if data["classification"]=="GOOD" else (0,0,255)
+
+        draw_text(frame, f"Score: {int(data['score'])}", 10, 30, color, 0.8)
+        draw_text(frame, f"Status: {data['classification']}", 10, 60, color, 0.7)
+
+        y = 100
+        for k,v in data["subscores"].items():
+            draw_text(frame, f"{k}: {int(v)}", 10, y)
+            y += 25
+
+        if data["reasons"]:
+            draw_text(frame, "Issues:", 10, y+10, (0,0,255))
+            for i,r in enumerate(data["reasons"]):
+                draw_text(frame, f"- {r}", 20, y+40+25*i, (0,0,255))
 
         if bad_alert:
-            cv2.putText(frame, "BAD POSTURE", (10, 80),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-
+            draw_text(frame, "BAD POSTURE ALERT", 350, 40, (0,0,255), 0.7)
         if seat_alert:
-            cv2.putText(frame, "STAND UP", (10, 120),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
-
+            draw_text(frame, "TIME TO STAND UP", 350, 70, (255,0,0), 0.7)
         if focused:
-            cv2.putText(frame, "FOCUSED", (10, 160),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+            draw_text(frame, "FOCUSED", 350, 100, (0,255,255), 0.7)
 
         cv2.imshow("Posture Monitor", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 
-    process.terminate()
+    proc.terminate()
     cv2.destroyAllWindows()
 
 
