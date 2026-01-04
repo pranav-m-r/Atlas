@@ -26,8 +26,11 @@ BAD_POSTURE_ALERT_TIME = 10.0
 SEATED_ALERT_TIME = 45 * 60
 FOCUS_MIN_TIME = 5 * 60
 
-NECK_ANGLE_THRESH = 10.0  # degrees deviation from calibrated
-TORSO_ANGLE_THRESH = 8.0
+# Absolute angle thresholds (good posture range)
+NECK_ANGLE_GOOD_MIN = 160.0  # degrees (ear-shoulder-hip angle)
+NECK_ANGLE_GOOD_MAX = 180.0  # degrees
+TORSO_ANGLE_GOOD_MIN = 165.0  # degrees (shoulder-hip-knee angle)
+TORSO_ANGLE_GOOD_MAX = 180.0  # degrees
 EYE_EAR_SHOULDER_ANGLE_THRESH = 3.0  # degrees change to count as head movement
 
 # weights for scoring
@@ -122,7 +125,7 @@ def detect_side(keypoints):
                 keypoints[RIGHT_INDICES['shoulder']][2] + 
                 keypoints[RIGHT_INDICES['hip']][2] +
                 keypoints[RIGHT_INDICES['knee']][2])
-
+    
     return 'LEFT' if left_conf >= right_conf else 'RIGHT'
 
 def get_side_keypoints(keypoints, side):
@@ -146,26 +149,7 @@ class PostureMonitor:
         self.seated_start = time.time()
         self.last_eye_ear_shoulder_angle = None
         self.last_move = time.time()
-        self.calibrated = False
-        self.neck_angle0 = None
-        self.torso_angle0 = None
         self.detected_side = None
-
-    def calibrate(self, side_kps):
-        """Calibrate using 3-point angles"""
-        ear = side_kps['ear'][:2]
-        shoulder = side_kps['shoulder'][:2]
-        hip = side_kps['hip'][:2]
-        knee = side_kps['knee'][:2]
-        
-        # Neck angle: ear-shoulder-hip (angle at shoulder)
-        self.neck_angle0 = calculate_angle(ear, shoulder, hip)
-        
-        # Torso angle: shoulder-hip-knee (angle at hip)
-        self.torso_angle0 = calculate_angle(shoulder, hip, knee)
-        
-        self.calibrated = True
-        print(f"Calibrated - Neck angle: {self.neck_angle0:.1f}°, Torso angle: {self.torso_angle0:.1f}°")
 
     def update(self, keypoints):
         now = time.time()
@@ -181,40 +165,55 @@ class PostureMonitor:
             side_kps['knee'][2] < MIN_KP_CONF):
             return None, False, False, False, side_kps
         
-        # Calibrate on first valid frame
-        if not self.calibrated:
-            self.calibrate(side_kps)
-        
         ear = side_kps['ear'][:2]
         eye = side_kps['eye'][:2]
         shoulder = side_kps['shoulder'][:2]
         hip = side_kps['hip'][:2]
         knee = side_kps['knee'][:2]
         
-        # Calculate current 3-point angles
+        # Calculate current 3-point angles (absolute values)
         # 1) Neck: ear-shoulder-hip (angle at shoulder)
         neck_angle = calculate_angle(ear, shoulder, hip)
-        neck_deviation = neck_angle - self.neck_angle0
         
         # 2) Torso: shoulder-hip-knee (angle at hip)
         torso_angle = calculate_angle(shoulder, hip, knee)
-        torso_deviation = torso_angle - self.torso_angle0
         
         # 3) Focus: eye-ear-shoulder (angle at ear)
         eye_ear_shoulder_angle = calculate_angle(eye, ear, shoulder)
         
-        # Calculate subscores
-        s_neck = max(0, 1 - abs(neck_deviation) / NECK_ANGLE_THRESH)
-        s_torso = max(0, 1 - abs(torso_deviation) / TORSO_ANGLE_THRESH)
+        # Calculate subscores based on absolute angle ranges
+        # Good posture = angle within range, bad posture = outside range
+        neck_in_range = NECK_ANGLE_GOOD_MIN <= neck_angle <= NECK_ANGLE_GOOD_MAX
+        torso_in_range = TORSO_ANGLE_GOOD_MIN <= torso_angle <= TORSO_ANGLE_GOOD_MAX
+        
+        # Score: how close to good range (1.0 = perfect, 0.0 = very bad)
+        if neck_in_range:
+            s_neck = 1.0
+        else:
+            # Distance from nearest boundary
+            dist = min(abs(neck_angle - NECK_ANGLE_GOOD_MIN), abs(neck_angle - NECK_ANGLE_GOOD_MAX))
+            s_neck = max(0, 1 - dist / 20.0)  # 20 degrees tolerance
+        
+        if torso_in_range:
+            s_torso = 1.0
+        else:
+            dist = min(abs(torso_angle - TORSO_ANGLE_GOOD_MIN), abs(torso_angle - TORSO_ANGLE_GOOD_MAX))
+            s_torso = max(0, 1 - dist / 20.0)  # 20 degrees tolerance
         score = (W_NECK * s_neck + W_TORSO * s_torso) * 100
         classification = "GOOD" if score >= 60 else "BAD"
         
         # Determine reasons for bad posture
         reasons = []
-        if abs(neck_deviation) > NECK_ANGLE_THRESH:
-            reasons.append(f"Neck Slouch ({abs(neck_deviation):.1f}°)")
-        if abs(torso_deviation) > TORSO_ANGLE_THRESH:
-            reasons.append(f"Torso Slouch ({abs(torso_deviation):.1f}°)")
+        if not neck_in_range:
+            if neck_angle < NECK_ANGLE_GOOD_MIN:
+                reasons.append(f"Neck Forward (angle: {neck_angle:.1f}°)")
+            else:
+                reasons.append(f"Neck Back (angle: {neck_angle:.1f}°)")
+        if not torso_in_range:
+            if torso_angle < TORSO_ANGLE_GOOD_MIN:
+                reasons.append(f"Torso Slouched (angle: {torso_angle:.1f}°)")
+            else:
+                reasons.append(f"Torso Leaning Back (angle: {torso_angle:.1f}°)")
         
         # Bad posture alert
         bad = score < 60
@@ -241,9 +240,7 @@ class PostureMonitor:
             "subscores": {"Neck": s_neck * 100, "Torso": s_torso * 100},
             "reasons": reasons,
             "neck_angle": neck_angle,
-            "neck_deviation": neck_deviation,
             "torso_angle": torso_angle,
-            "torso_deviation": torso_deviation,
             "eye_ear_shoulder_angle": eye_ear_shoulder_angle
         }
         
@@ -299,7 +296,10 @@ def main():
     frame_size = WIDTH * HEIGHT * 3 // 2  # YUV420
     
     print("\nSide Camera Posture Monitor started")
-    print("Press 'q' to quit, 's' to save screenshot, 'c' to recalibrate\n")
+    print("Using absolute angle thresholds (no calibration needed)")
+    print(f"Good neck angle range: {NECK_ANGLE_GOOD_MIN}-{NECK_ANGLE_GOOD_MAX}°")
+    print(f"Good torso angle range: {TORSO_ANGLE_GOOD_MIN}-{TORSO_ANGLE_GOOD_MAX}°")
+    print("Press Ctrl+C to stop\n")
     
     frame_count = 0
     start_time = time.time()
@@ -360,7 +360,7 @@ def main():
                     # Label the point
                     label = f"{name.upper()}"
                     cv2.putText(frame, label, (px + 15, py + 5), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             
             # Draw lines connecting key points
             # Neck line: ear-shoulder-hip
@@ -400,8 +400,8 @@ def main():
                 draw_text(frame, f"Status: {data['classification']}", 10, 60, color, 0.7)
                 
                 # Show angles
-                draw_text(frame, f"Neck: {data['neck_angle']:.1f}deg ({data['neck_deviation']:+.1f})", 10, 95, (255, 255, 255), 0.5)
-                draw_text(frame, f"Torso: {data['torso_angle']:.1f}deg ({data['torso_deviation']:+.1f})", 10, 115, (255, 255, 255), 0.5)
+                draw_text(frame, f"Neck: {data['neck_angle']:.1f}deg (range: {NECK_ANGLE_GOOD_MIN}-{NECK_ANGLE_GOOD_MAX})", 10, 95, (255, 255, 255), 0.5)
+                draw_text(frame, f"Torso: {data['torso_angle']:.1f}deg (range: {TORSO_ANGLE_GOOD_MIN}-{TORSO_ANGLE_GOOD_MAX})", 10, 115, (255, 255, 255), 0.5)
                 draw_text(frame, f"Focus: {data['eye_ear_shoulder_angle']:.1f}deg", 10, 135, (255, 255, 255), 0.5)
                 
                 # Show subscores
@@ -436,26 +436,20 @@ def main():
                 y_coord += 18
                 conf_str = f"{kp[2]:.2f}" if kp[2] > MIN_KP_CONF else "LOW"
                 draw_text(frame, f"{name}: ({kp[0]:.2f},{kp[1]:.2f}) [{conf_str}]", 
-                        WIDTH - 200, y_coord, kp_colors[name], 0.4)
+                            WIDTH - 200, y_coord, kp_colors[name], 0.4)
             
             # Display frame
             cv2.imshow("Side Camera Posture Monitor", frame)
             
-            # Check for key press - use longer wait and check explicitly
-            key = cv2.waitKey(30) & 0xFF  # Increased to 30ms
-            
-            # Debug: print key value if any key is pressed
-            if key != 255:  # 255 means no key pressed
-                print(f"Key pressed: {key} (chr: {chr(key) if key < 128 else 'N/A'})")
-            
-            if key == ord("q") or key == ord("Q") or key == 27:  # 27 is ESC
-                print("Quitting...")
+            # Check for key press
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord("q"):
                 break
-            elif key == ord("s") or key == ord("S"):
+            elif key == ord("s"):
                 filename = f"side_screenshot_{int(time.time())}.jpg"
                 cv2.imwrite(filename, frame)
                 print(f"Screenshot saved: {filename}")
-            elif key == ord("c") or key == ord("C"):
+            elif key == ord("c"):
                 monitor.calibrated = False
                 print("Recalibrating on next frame...")
     
