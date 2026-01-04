@@ -411,37 +411,37 @@ def main():
                 cv2.line(frame, ear_px, shoulder_px, (255, 0, 255), 2)  # Ear-shoulder (magenta)
             
             # ==== ANNOTATIONS ====
-            # if data:
-            color = (0, 255, 0) if data["classification"] == "GOOD" else (0, 0, 255)
-            draw_text(frame, f"Score: {int(data['score'])}", 10, 30, color, 0.8)
-            draw_text(frame, f"Status: {data['classification']}", 10, 60, color, 0.7)
-            
-            # Show angles
-            draw_text(frame, f"Neck: {data['neck_angle']:.1f}deg (range: {NECK_ANGLE_GOOD_MIN}-{NECK_ANGLE_GOOD_MAX})", 10, 95, (255, 255, 255), 0.5)
-            draw_text(frame, f"Torso: {data['torso_angle']:.1f}deg (range: {TORSO_ANGLE_GOOD_MIN}-{TORSO_ANGLE_GOOD_MAX})", 10, 115, (255, 255, 255), 0.5)
-            draw_text(frame, f"Focus: {data['eye_ear_shoulder_angle']:.1f}deg", 10, 135, (255, 255, 255), 0.5)
-            
-            # Show subscores
-            y = 165
-            for k, v in data["subscores"].items():
-                draw_text(frame, f"{k}: {int(v)}", 10, y)
-                y += 25
-            
-            # Show issues
-            if data["reasons"]:
-                draw_text(frame, "Issues:", 10, y, (0, 0, 255))
-                for i, r in enumerate(data["reasons"]):
-                    draw_text(frame, f"- {r}", 20, y + 25 * (i + 1), (0, 0, 255))
-            
-            # Alerts
-            if bad_alert:
-                draw_text(frame, "BAD POSTURE ALERT", WIDTH - 250, 60, (0, 0, 255), 0.7)
-            if seated_alert:
-                draw_text(frame, "TIME TO STAND UP", WIDTH - 250, 90, (255, 0, 0), 0.7)
-            if focused:
-                draw_text(frame, "FOCUSED", WIDTH - 250, 120, (0, 255, 255), 0.7)
-            # else:
-            #     draw_text(frame, "Waiting for valid pose...", 10, 30, (0, 255, 255), 0.7)
+            if data:
+                color = (0, 255, 0) if data["classification"] == "GOOD" else (0, 0, 255)
+                draw_text(frame, f"Score: {int(data['score'])}", 10, 30, color, 0.8)
+                draw_text(frame, f"Status: {data['classification']}", 10, 60, color, 0.7)
+                
+                # Show angles
+                draw_text(frame, f"Neck: {data['neck_angle']:.1f}deg (range: {NECK_ANGLE_GOOD_MIN}-{NECK_ANGLE_GOOD_MAX})", 10, 95, (255, 255, 255), 0.5)
+                draw_text(frame, f"Torso: {data['torso_angle']:.1f}deg (range: {TORSO_ANGLE_GOOD_MIN}-{TORSO_ANGLE_GOOD_MAX})", 10, 115, (255, 255, 255), 0.5)
+                draw_text(frame, f"Focus: {data['eye_ear_shoulder_angle']:.1f}deg", 10, 135, (255, 255, 255), 0.5)
+                
+                # Show subscores
+                y = 165
+                for k, v in data["subscores"].items():
+                    draw_text(frame, f"{k}: {int(v)}", 10, y)
+                    y += 25
+                
+                # Show issues
+                if data["reasons"]:
+                    draw_text(frame, "Issues:", 10, y, (0, 0, 255))
+                    for i, r in enumerate(data["reasons"]):
+                        draw_text(frame, f"- {r}", 20, y + 25 * (i + 1), (0, 0, 255))
+                
+                # Alerts
+                if bad_alert:
+                    draw_text(frame, "BAD POSTURE ALERT", WIDTH - 250, 60, (0, 0, 255), 0.7)
+                if seated_alert:
+                    draw_text(frame, "TIME TO STAND UP", WIDTH - 250, 90, (255, 0, 0), 0.7)
+                if focused:
+                    draw_text(frame, "FOCUSED", WIDTH - 250, 120, (0, 255, 255), 0.7)
+            else:
+                draw_text(frame, "Waiting for valid pose...", 10, 30, (0, 255, 255), 0.7)
             
             # FPS
             draw_text(frame, f"FPS: {fps:.1f}", 10, HEIGHT - 20, (0, 255, 255), 0.6)
