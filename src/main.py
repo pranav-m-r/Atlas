@@ -381,8 +381,8 @@ def main():
     
     print("\nSide Camera Posture Monitor started")
     print("Using absolute angle thresholds (no calibration needed)")
-    print(f"Good neck angle range: {NECK_FORWARD_MAX}-{NECK_BACKWARD_MIN}° (tolerance: -{NECK_FORWARD_TOLERANCE}/+{NECK_BACKWARD_TOLERANCE})")
-    print(f"Good torso angle range: {TORSO_FORWARD_MAX}-{TORSO_BACKWARD_MIN}° (tolerance: ±{TORSO_FORWARD_TOLERANCE})")
+    print(f"Good neck angle range: {NECK_FORWARD_MIN}-{NECK_BACKWARD_MAX}° (tolerance: -{NECK_FORWARD_TOLERANCE}/+{NECK_BACKWARD_TOLERANCE})")
+    print(f"Good torso angle range: {TORSO_FORWARD_MIN}-{TORSO_BACKWARD_MAX}° (tolerance: ±{TORSO_FORWARD_TOLERANCE})")
     print("Press Ctrl+C to stop\n")
     
     frame_count = 0
@@ -485,8 +485,8 @@ def main():
                 draw_text(frame, f"Status: {data['classification']}", 10, 60, color, 0.7)
                 
                 # Show angles
-                draw_text(frame, f"Neck: {data['neck_angle']:.1f}deg (range: {NECK_FORWARD_MAX}-{NECK_BACKWARD_MIN})", 10, 95, (255, 255, 255), 0.5)
-                draw_text(frame, f"Torso: {data['torso_angle']:.1f}deg (range: {TORSO_FORWARD_MAX}-{TORSO_BACKWARD_MIN})", 10, 115, (255, 255, 255), 0.5)
+                draw_text(frame, f"Neck: {data['neck_angle']:.1f}deg (range: {NECK_FORWARD_MIN}-{NECK_BACKWARD_MAX})", 10, 95, (255, 255, 255), 0.5)
+                draw_text(frame, f"Torso: {data['torso_angle']:.1f}deg (range: {TORSO_FORWARD_MIN}-{TORSO_BACKWARD_MAX})", 10, 115, (255, 255, 255), 0.5)
                 draw_text(frame, f"Focus: {data['eye_ear_shoulder_angle']:.1f}deg", 10, 135, (255, 255, 255), 0.5)
                 
                 # Show subscores
