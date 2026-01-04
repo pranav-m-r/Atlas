@@ -23,9 +23,6 @@ BAD_POSTURE_ALERT_TIME = 10.0
 IDLE_ALERT_TIME = 30 * 60  # 30 minutes of continuous sitting/standing
 FOCUS_MIN_TIME = 5 * 60
 
-# Angle variation threshold for idle detection (ankle-knee-hip angle)
-ANKLE_KNEE_HIP_ANGLE_THRESH = 5.0  # degrees change to count as position change
-
 # Absolute angle bounds (180° = perfect posture, min/max = score of 0)
 # Neck angle bounds (ear-shoulder-hip)
 NECK_MIN = 130.0   # Below this = score 0
@@ -38,10 +35,12 @@ TORSO_MAX = 135.0  # Above this = score 0
 TORSO_OPTIMAL = 90.0  # Perfect posture
 
 EYE_EAR_SHOULDER_ANGLE_THRESH = 5.0  # degrees change to count as head movement
+ANKLE_KNEE_HIP_ANGLE_THRESH = 5.0  # degrees change to count as position change
 
 # weights for scoring
 W_NECK = 0.5
 W_TORSO = 0.5
+SCORE_THRESHOLD = 80.0  # Overall score threshold for GOOD posture
 
 os.environ['DISPLAY'] = ':0'
 
@@ -240,7 +239,7 @@ class PostureMonitor:
         
         # Overall score
         score = (W_NECK * s_neck + W_TORSO * s_torso) * 100
-        classification = "GOOD" if score >= 60 else "BAD"
+        classification = "GOOD" if score >= SCORE_THRESHOLD else "BAD"
         
         # Determine reasons for bad posture (only show if outside bounds)
         reasons = []
@@ -263,7 +262,7 @@ class PostureMonitor:
             reasons.append(f"Torso Leaning Back (angle: {torso_angle:.1f}°)")
         
         # Bad posture alert
-        bad = score < 60
+        bad = score < SCORE_THRESHOLD
         if bad:
             self.bad_start = self.bad_start or now
         else:
