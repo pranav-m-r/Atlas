@@ -26,8 +26,11 @@ MIN_KP_CONF = 0.3
 TIME_RATE = 30.0
 
 BAD_POSTURE_ALERT_TIME = 10.0
-SEATED_ALERT_TIME = 45 * 60
+IDLE_ALERT_TIME = 30 * 60  # 30 minutes of continuous sitting/standing
 FOCUS_MIN_TIME = 5 * 60
+
+# Angle variation threshold for idle detection (ankle-knee-hip angle)
+ANKLE_KNEE_HIP_ANGLE_THRESH = 5.0  # degrees change to count as position change
 
 # Absolute angle thresholds (ear-shoulder-hip for neck, shoulder-hip-knee for torso)
 # Neck angle ranges (forward = leaning forward, backward = leaning back)
@@ -57,10 +60,10 @@ W_TORSO = 0.5
 os.environ['DISPLAY'] = ':0'
 
 # Keypoint indices
-# Left side: eye=1, ear=3, shoulder=5, hip=11, knee=13
-# Right side: eye=2, ear=4, shoulder=6, hip=12, knee=14
-LEFT_INDICES = {'eye': 1, 'ear': 3, 'shoulder': 5, 'hip': 11, 'knee': 13}
-RIGHT_INDICES = {'eye': 2, 'ear': 4, 'shoulder': 6, 'hip': 12, 'knee': 14}
+# Left side: eye=1, ear=3, shoulder=5, hip=11, knee=13, ankle=15
+# Right side: eye=2, ear=4, shoulder=6, hip=12, knee=14, ankle=16
+LEFT_INDICES = {'eye': 1, 'ear': 3, 'shoulder': 5, 'hip': 11, 'knee': 13, 'ankle': 15}
+RIGHT_INDICES = {'eye': 2, 'ear': 4, 'shoulder': 6, 'hip': 12, 'knee': 14, 'ankle': 16}
 
 KEYPOINT_NAMES = [
     'nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear',
@@ -168,14 +171,15 @@ def detect_side(keypoints):
     return 'LEFT' if left_conf >= right_conf else 'RIGHT'
 
 def get_side_keypoints(keypoints, side):
-    """Get the 5 key points (eye, ear, shoulder, hip, knee) for the detected side"""
+    """Get the 6 key points (eye, ear, shoulder, hip, knee, ankle) for the detected side"""
     indices = LEFT_INDICES if side == 'LEFT' else RIGHT_INDICES
     return {
         'eye': keypoints[indices['eye']],
         'ear': keypoints[indices['ear']],
         'shoulder': keypoints[indices['shoulder']],
         'hip': keypoints[indices['hip']],
-        'knee': keypoints[indices['knee']]
+        'knee': keypoints[indices['knee']],
+        'ankle': keypoints[indices['ankle']]
     }
 
 # ============================================================
@@ -185,9 +189,10 @@ def get_side_keypoints(keypoints, side):
 class PostureMonitor:
     def __init__(self):
         self.bad_start = None
-        self.seated_start = time.time()
         self.last_eye_ear_shoulder_angle = None
         self.focus_session_start = None  # Track when current focus session started
+        self.last_ankle_knee_hip_angle = None
+        self.idle_session_start = None  # Track when current idle session started
         self.detected_side = None
 
     def update(self, keypoints):
@@ -273,8 +278,32 @@ class PostureMonitor:
             self.bad_start = None
         bad_alert = self.bad_start and ((now - self.bad_start) * TIME_RATE > BAD_POSTURE_ALERT_TIME)
         
-        # Seated alert
-        seated_alert = ((now - self.seated_start) * TIME_RATE) > SEATED_ALERT_TIME
+        # Idle detection based on ankle-knee-hip angle stability
+        # If angle variation is WITHIN threshold, user is idle (sitting/standing still)
+        # If angle variation EXCEEDS threshold, idle session is broken (position changed)
+        idle_duration = 0.0
+        
+        # Check if we have valid ankle keypoint for idle tracking
+        if side_kps['ankle'][2] >= MIN_KP_CONF:
+            ankle = side_kps['ankle'][:2]
+            ankle_knee_hip_angle = calculate_angle(ankle, knee, hip)
+            
+            if self.last_ankle_knee_hip_angle is not None:
+                angle_variation = abs(ankle_knee_hip_angle - self.last_ankle_knee_hip_angle)
+                
+                if angle_variation > ANKLE_KNEE_HIP_ANGLE_THRESH:
+                    # Position changed significantly - break idle session
+                    self.idle_session_start = None
+                else:
+                    # Position stable - maintain or start idle session
+                    if self.idle_session_start is None:
+                        self.idle_session_start = now
+            
+            self.last_ankle_knee_hip_angle = ankle_knee_hip_angle
+        
+        # Calculate current idle session duration (accelerated by TIME_RATE)
+        if self.idle_session_start is not None:
+            idle_duration = (now - self.idle_session_start) * TIME_RATE
         
         # Focus detection based on eye-ear-shoulder angle stability
         # If angle variation is WITHIN threshold, user is focusing
@@ -305,10 +334,11 @@ class PostureMonitor:
             "neck_angle": neck_angle,
             "torso_angle": torso_angle,
             "eye_ear_shoulder_angle": eye_ear_shoulder_angle,
-            "focus_duration": focus_duration
+            "focus_duration": focus_duration,
+            "idle_duration": idle_duration
         }
         
-        return data, bad_alert, seated_alert, focus_duration >= FOCUS_MIN_TIME, side_kps
+        return data, bad_alert, idle_duration >= IDLE_ALERT_TIME, focus_duration >= FOCUS_MIN_TIME, side_kps
 
 # ============================================================
 # ===================== MOVENET INFERENCE ====================
@@ -390,7 +420,7 @@ def main():
             
             # Update monitor
             result = monitor.update(keypoints)
-            data, bad_alert, seated_alert, focused, side_kps = result
+            data, bad_alert, idle_alert, focused, side_kps = result
             
             # Calculate FPS
             frame_count += 1
@@ -483,14 +513,18 @@ def main():
                 # Alerts
                 if bad_alert:
                     draw_text(frame, "BAD POSTURE ALERT", WIDTH - 250, 60, (0, 0, 255), 0.7)
-                if seated_alert:
-                    draw_text(frame, "TIME TO STAND UP", WIDTH - 250, 90, (255, 0, 0), 0.7)
                 
                 # Focus session duration (only show if >= 5 minutes)
-                if data["focus_duration"] >= FOCUS_MIN_TIME:
+                if focused:
                     minutes = int(data["focus_duration"] // 60)
                     seconds = int(data["focus_duration"] % 60)
-                    draw_text(frame, f"FOCUS: {minutes}m {seconds}s", WIDTH - 250, 120, (0, 255, 255), 0.7)
+                    draw_text(frame, f"FOCUS: {minutes}m {seconds}s", WIDTH - 250, 90, (0, 255, 255), 0.7)
+                
+                # Idle session duration (only show if >= 30 minutes)
+                if idle_alert:
+                    minutes = int(data["idle_duration"] // 60)
+                    seconds = int(data["idle_duration"] % 60)
+                    draw_text(frame, f"IDLE: {minutes}m {seconds}s", WIDTH - 250, 120, (255, 165, 0), 0.7)
             else:
                 draw_text(frame, "Waiting for valid pose...", 10, 30, (0, 255, 255), 0.7)
             
