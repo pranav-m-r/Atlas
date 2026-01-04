@@ -441,15 +441,16 @@ def main():
             # Display frame
             cv2.imshow("Side Camera Posture Monitor", frame)
             
-            # Check for key press
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord("q"):
+            # Check for key press (increase wait time for better key detection)
+            key = cv2.waitKey(10) & 0xFF
+            if key == ord("q") or key == ord("Q"):
+                print("Quitting...")
                 break
-            elif key == ord("s"):
+            elif key == ord("s") or key == ord("S"):
                 filename = f"side_screenshot_{int(time.time())}.jpg"
                 cv2.imwrite(filename, frame)
                 print(f"Screenshot saved: {filename}")
-            elif key == ord("c"):
+            elif key == ord("c") or key == ord("C"):
                 monitor.calibrated = False
                 print("Recalibrating on next frame...")
     
