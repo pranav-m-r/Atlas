@@ -475,6 +475,7 @@ def main():
     frame_count = 0
     start_time = time.time()
     last_fps_update = start_time
+    last_log_time = start_time  # Track last time we logged to CSV
     fps = 0
     
     try:
@@ -500,14 +501,15 @@ def main():
             data, bad_alert, idle_alert, focused, side_kps = result
             
             # ==== CSV LOGGING ====
-            # Log scores to logs.csv (if valid data)
-            if data:
+            # Log scores to logs.csv every 10 seconds (if valid data)
+            if data and (current_time - last_log_time >= 10.0):
                 log_scores(
                     current_time,
                     data['score'],
                     data['subscores']['Neck'],
                     data['subscores']['Torso']
                 )
+                last_log_time = current_time
             
             # Log completed focus sessions
             if monitor.last_completed_focus:
