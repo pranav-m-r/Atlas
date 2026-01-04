@@ -112,17 +112,17 @@ def detect_side(keypoints):
     If camera is on person's RIGHT, we see their RIGHT eye/ear/shoulder/hip better.
     """
     left_conf = (keypoints[LEFT_INDICES['eye']][2] + 
-                 keypoints[LEFT_INDICES['ear']][2] + 
-                 keypoints[LEFT_INDICES['shoulder']][2] + 
-                 keypoints[LEFT_INDICES['hip']][2] +
-                 keypoints[LEFT_INDICES['knee']][2])
+                keypoints[LEFT_INDICES['ear']][2] + 
+                keypoints[LEFT_INDICES['shoulder']][2] + 
+                keypoints[LEFT_INDICES['hip']][2] +
+                keypoints[LEFT_INDICES['knee']][2])
     
     right_conf = (keypoints[RIGHT_INDICES['eye']][2] + 
-                  keypoints[RIGHT_INDICES['ear']][2] + 
-                  keypoints[RIGHT_INDICES['shoulder']][2] + 
-                  keypoints[RIGHT_INDICES['hip']][2] +
-                  keypoints[RIGHT_INDICES['knee']][2])
-    
+                keypoints[RIGHT_INDICES['ear']][2] + 
+                keypoints[RIGHT_INDICES['shoulder']][2] + 
+                keypoints[RIGHT_INDICES['hip']][2] +
+                keypoints[RIGHT_INDICES['knee']][2])
+
     return 'LEFT' if left_conf >= right_conf else 'RIGHT'
 
 def get_side_keypoints(keypoints, side):
@@ -360,7 +360,7 @@ def main():
                     # Label the point
                     label = f"{name.upper()}"
                     cv2.putText(frame, label, (px + 15, py + 5), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             
             # Draw lines connecting key points
             # Neck line: ear-shoulder-hip
@@ -436,14 +436,19 @@ def main():
                 y_coord += 18
                 conf_str = f"{kp[2]:.2f}" if kp[2] > MIN_KP_CONF else "LOW"
                 draw_text(frame, f"{name}: ({kp[0]:.2f},{kp[1]:.2f}) [{conf_str}]", 
-                         WIDTH - 200, y_coord, kp_colors[name], 0.4)
+                        WIDTH - 200, y_coord, kp_colors[name], 0.4)
             
             # Display frame
             cv2.imshow("Side Camera Posture Monitor", frame)
             
-            # Check for key press (increase wait time for better key detection)
-            key = cv2.waitKey(10) & 0xFF
-            if key == ord("q") or key == ord("Q"):
+            # Check for key press - use longer wait and check explicitly
+            key = cv2.waitKey(30) & 0xFF  # Increased to 30ms
+            
+            # Debug: print key value if any key is pressed
+            if key != 255:  # 255 means no key pressed
+                print(f"Key pressed: {key} (chr: {chr(key) if key < 128 else 'N/A'})")
+            
+            if key == ord("q") or key == ord("Q") or key == 27:  # 27 is ESC
                 print("Quitting...")
                 break
             elif key == ord("s") or key == ord("S"):
