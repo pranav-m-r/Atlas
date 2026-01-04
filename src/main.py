@@ -453,23 +453,38 @@ def get_data():
         "idle": []
     }
     
-    # Read logs.csv
-    if os.path.exists(LOGS_CSV):
-        with open(LOGS_CSV, 'r', newline='') as f:
-            reader = csv.DictReader(f)
-            data["logs"] = list(reader)
+    def safe_read_csv(file_path):
+        """Safely read CSV file, handling concurrent access and corrupted data"""
+        rows = []
+        try:
+            if os.path.exists(file_path):
+                # Read file content first to avoid concurrent access issues
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                
+                # Remove any NUL bytes
+                content = content.replace('\x00', '')
+                
+                # Parse CSV from cleaned content
+                lines = content.strip().split('\n')
+                if len(lines) > 1:  # Has header + at least one row
+                    reader = csv.DictReader(lines)
+                    for row in reader:
+                        try:
+                            # Only add valid rows (non-empty)
+                            if any(row.values()):
+                                rows.append(row)
+                        except Exception:
+                            continue  # Skip malformed rows
+        except Exception as e:
+            print(f"Error reading {file_path}: {e}")
+        
+        return rows
     
-    # Read focus.csv
-    if os.path.exists(FOCUS_CSV):
-        with open(FOCUS_CSV, 'r', newline='') as f:
-            reader = csv.DictReader(f)
-            data["focus"] = list(reader)
-    
-    # Read idle.csv
-    if os.path.exists(IDLE_CSV):
-        with open(IDLE_CSV, 'r', newline='') as f:
-            reader = csv.DictReader(f)
-            data["idle"] = list(reader)
+    # Read all CSV files safely
+    data["logs"] = safe_read_csv(LOGS_CSV)
+    data["focus"] = safe_read_csv(FOCUS_CSV)
+    data["idle"] = safe_read_csv(IDLE_CSV)
     
     return jsonify(data)
 
