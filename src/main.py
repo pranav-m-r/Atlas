@@ -34,8 +34,8 @@ TORSO_MIN = 45.0   # Below this = score 0
 TORSO_MAX = 135.0  # Above this = score 0
 TORSO_OPTIMAL = 90.0  # Perfect posture
 
-EYE_EAR_SHOULDER_ANGLE_THRESH = 5.0  # degrees change to count as head movement
-ANKLE_KNEE_HIP_ANGLE_THRESH = 5.0  # degrees change to count as position change
+EYE_EAR_SHOULDER_ANGLE_THRESH = 10.0  # degrees change to count as head movement
+ANKLE_KNEE_HIP_ANGLE_THRESH = 10.0  # degrees change to count as position change
 
 # weights for scoring
 W_NECK = 0.5
