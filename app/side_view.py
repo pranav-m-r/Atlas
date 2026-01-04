@@ -247,23 +247,23 @@ class PostureMonitor:
                 dist = torso_angle - TORSO_BACKWARD_MIN
                 s_torso = max(0, 1 - dist / TORSO_BACKWARD_TOLERANCE)
         score = (W_NECK * s_neck + W_TORSO * s_torso) * 100
-        classification = "GOOD" if score >= 70 else "BAD"
+        classification = "GOOD" if score >= 60 else "BAD"
         
         # Determine reasons for bad posture
         reasons = []
         if not neck_in_range:
-            if neck_angle < NECK_FORWARD_MAX:
+            if neck_angle > NECK_FORWARD_MAX:
                 reasons.append(f"Neck Forward (angle: {neck_angle:.1f}°)")
             else:
                 reasons.append(f"Neck Back (angle: {neck_angle:.1f}°)")
         if not torso_in_range:
-            if torso_angle < TORSO_FORWARD_MAX:
+            if torso_angle > TORSO_FORWARD_MAX:
                 reasons.append(f"Torso Slouched (angle: {torso_angle:.1f}°)")
             else:
                 reasons.append(f"Torso Leaning Back (angle: {torso_angle:.1f}°)")
         
         # Bad posture alert
-        bad = score < 70
+        bad = score < 60
         if bad:
             self.bad_start = self.bad_start or now
         else:
