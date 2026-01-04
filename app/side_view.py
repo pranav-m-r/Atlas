@@ -26,9 +26,26 @@ BAD_POSTURE_ALERT_TIME = 10.0
 SEATED_ALERT_TIME = 45 * 60
 FOCUS_MIN_TIME = 5 * 60
 
-NECK_ANGLE_THRESH = 10.0  # degrees deviation from calibrated
-TORSO_ANGLE_THRESH = 8.0
+# Absolute angle thresholds (ear-shoulder-hip for neck, shoulder-hip-knee for torso)
+# Neck angle ranges (forward = leaning forward, backward = leaning back)
+NECK_FORWARD_MIN = 140.0   # Below this = very forward (bad)
+NECK_FORWARD_MAX = 160.0   # Good posture starts here
+NECK_BACKWARD_MIN = 180.0  # Good posture ends here
+NECK_BACKWARD_MAX = 220.0  # Above this = very backward (bad)
+
+# Torso angle ranges (forward = slouching, backward = leaning back)
+TORSO_FORWARD_MIN = 55.0   # Below this = very slouched (bad)
+TORSO_FORWARD_MAX = 85.0   # Good posture starts here
+TORSO_BACKWARD_MIN = 110.0 # Good posture ends here
+TORSO_BACKWARD_MAX = 140.0 # Above this = very leaning back (bad)
+
 EYE_EAR_SHOULDER_ANGLE_THRESH = 3.0  # degrees change to count as head movement
+
+# Calculate tolerances from band ranges
+NECK_FORWARD_TOLERANCE = (NECK_FORWARD_MAX - NECK_FORWARD_MIN) / 2   # 10 degrees
+NECK_BACKWARD_TOLERANCE = (NECK_BACKWARD_MAX - NECK_BACKWARD_MIN) / 2  # 20 degrees
+TORSO_FORWARD_TOLERANCE = (TORSO_FORWARD_MAX - TORSO_FORWARD_MIN) / 2  # 15 degrees
+TORSO_BACKWARD_TOLERANCE = (TORSO_BACKWARD_MAX - TORSO_BACKWARD_MIN) / 2  # 15 degrees
 
 # weights for scoring
 W_NECK = 0.5
@@ -59,8 +76,25 @@ SKELETON_CONNECTIONS = [
 # ========================= UTILS =============================
 # ============================================================
 
-def draw_text(frame, text, x, y, color=(255,255,255), scale=0.6):
-    cv2.putText(frame, text, (x,y), cv2.FONT_HERSHEY_SIMPLEX, scale, color, 2)
+def draw_text(frame, text, x, y, color=(255,255,255), scale=0.6, thickness=2):
+    """Draw text with translucent black background for better visibility"""
+    # Get text size to create background rectangle
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    (text_width, text_height), baseline = cv2.getTextSize(text, font, scale, thickness)
+    
+    # Create semi-transparent black background
+    padding = 4
+    overlay = frame.copy()
+    cv2.rectangle(overlay, 
+                (x - padding, y - text_height - padding),
+                (x + text_width + padding, y + baseline + padding),
+                (0, 0, 0), -1)
+    
+    # Blend overlay with original frame (0.6 = 60% transparency)
+    cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+    
+    # Draw text on top
+    cv2.putText(frame, text, (x, y), font, scale, color, thickness)
 
 def draw_skeleton(frame, keypoints, connections=SKELETON_CONNECTIONS, conf_thresh=MIN_KP_CONF):
     h, w = frame.shape[:2]
@@ -76,26 +110,31 @@ def draw_skeleton(frame, keypoints, connections=SKELETON_CONNECTIONS, conf_thres
 
 def calculate_angle(p1, p2, p3):
     """
-    Calculate angle at p2 formed by points p1-p2-p3
-    Returns angle in degrees (0-180)
+    Calculate signed angle at p2 formed by points p1-p2-p3
+    Returns angle in degrees (0-360)
+    
+    For side view (ear-shoulder-hip):
+    - Small angles (0-90): Forward lean (ear in front)
+    - ~180: Neutral/straight posture
+    - Large angles (270-360): Backward lean (ear behind)
     """
     # Vectors from p2 to p1 and p2 to p3
     v1 = (p1[0] - p2[0], p1[1] - p2[1])
     v2 = (p3[0] - p2[0], p3[1] - p2[1])
     
-    # Dot product and magnitudes
-    dot = v1[0] * v2[0] + v1[1] * v2[1]
-    mag1 = math.sqrt(v1[0]**2 + v1[1]**2)
-    mag2 = math.sqrt(v2[0]**2 + v2[1]**2)
+    # Calculate angle using atan2 for full 360-degree range
+    angle1 = math.atan2(v1[1], v1[0])
+    angle2 = math.atan2(v2[1], v2[0])
     
-    if mag1 == 0 or mag2 == 0:
-        return 0.0
+    # Calculate the angle difference
+    angle = angle2 - angle1
     
-    # Angle in radians then degrees
-    cos_angle = dot / (mag1 * mag2)
-    cos_angle = max(-1.0, min(1.0, cos_angle))  # Clamp to [-1, 1]
-    angle = math.acos(cos_angle)
-    return math.degrees(angle)
+    # Normalize to 0-360 range
+    angle_deg = math.degrees(angle)
+    if angle_deg < 0:
+        angle_deg += 360
+    
+    return angle_deg
 
 def get_pixel_coords(kp, w, h):
     """Convert normalized coords to pixel coords"""
@@ -112,16 +151,16 @@ def detect_side(keypoints):
     If camera is on person's RIGHT, we see their RIGHT eye/ear/shoulder/hip better.
     """
     left_conf = (keypoints[LEFT_INDICES['eye']][2] + 
-                 keypoints[LEFT_INDICES['ear']][2] + 
-                 keypoints[LEFT_INDICES['shoulder']][2] + 
-                 keypoints[LEFT_INDICES['hip']][2] +
-                 keypoints[LEFT_INDICES['knee']][2])
+                keypoints[LEFT_INDICES['ear']][2] + 
+                keypoints[LEFT_INDICES['shoulder']][2] + 
+                keypoints[LEFT_INDICES['hip']][2] +
+                keypoints[LEFT_INDICES['knee']][2])
     
     right_conf = (keypoints[RIGHT_INDICES['eye']][2] + 
-                  keypoints[RIGHT_INDICES['ear']][2] + 
-                  keypoints[RIGHT_INDICES['shoulder']][2] + 
-                  keypoints[RIGHT_INDICES['hip']][2] +
-                  keypoints[RIGHT_INDICES['knee']][2])
+                keypoints[RIGHT_INDICES['ear']][2] + 
+                keypoints[RIGHT_INDICES['shoulder']][2] + 
+                keypoints[RIGHT_INDICES['hip']][2] +
+                keypoints[RIGHT_INDICES['knee']][2])
     
     return 'LEFT' if left_conf >= right_conf else 'RIGHT'
 
@@ -146,26 +185,7 @@ class PostureMonitor:
         self.seated_start = time.time()
         self.last_eye_ear_shoulder_angle = None
         self.last_move = time.time()
-        self.calibrated = False
-        self.neck_angle0 = None
-        self.torso_angle0 = None
         self.detected_side = None
-
-    def calibrate(self, side_kps):
-        """Calibrate using 3-point angles"""
-        ear = side_kps['ear'][:2]
-        shoulder = side_kps['shoulder'][:2]
-        hip = side_kps['hip'][:2]
-        knee = side_kps['knee'][:2]
-        
-        # Neck angle: ear-shoulder-hip (angle at shoulder)
-        self.neck_angle0 = calculate_angle(ear, shoulder, hip)
-        
-        # Torso angle: shoulder-hip-knee (angle at hip)
-        self.torso_angle0 = calculate_angle(shoulder, hip, knee)
-        
-        self.calibrated = True
-        print(f"Calibrated - Neck angle: {self.neck_angle0:.1f}°, Torso angle: {self.torso_angle0:.1f}°")
 
     def update(self, keypoints):
         now = time.time()
@@ -181,43 +201,69 @@ class PostureMonitor:
             side_kps['knee'][2] < MIN_KP_CONF):
             return None, False, False, False, side_kps
         
-        # Calibrate on first valid frame
-        if not self.calibrated:
-            self.calibrate(side_kps)
-        
         ear = side_kps['ear'][:2]
         eye = side_kps['eye'][:2]
         shoulder = side_kps['shoulder'][:2]
         hip = side_kps['hip'][:2]
         knee = side_kps['knee'][:2]
         
-        # Calculate current 3-point angles
+        # Calculate current 3-point angles (absolute values)
         # 1) Neck: ear-shoulder-hip (angle at shoulder)
         neck_angle = calculate_angle(ear, shoulder, hip)
-        neck_deviation = neck_angle - self.neck_angle0
         
         # 2) Torso: shoulder-hip-knee (angle at hip)
         torso_angle = calculate_angle(shoulder, hip, knee)
-        torso_deviation = torso_angle - self.torso_angle0
         
         # 3) Focus: eye-ear-shoulder (angle at ear)
         eye_ear_shoulder_angle = calculate_angle(eye, ear, shoulder)
         
-        # Calculate subscores
-        s_neck = max(0, 1 - abs(neck_deviation) / NECK_ANGLE_THRESH)
-        s_torso = max(0, 1 - abs(torso_deviation) / TORSO_ANGLE_THRESH)
+        # Calculate subscores based on absolute angle ranges
+        # Good posture = angle within range, bad posture = outside range
+        neck_in_range = NECK_FORWARD_MAX <= neck_angle <= NECK_BACKWARD_MIN
+        torso_in_range = TORSO_FORWARD_MAX <= torso_angle <= TORSO_BACKWARD_MIN
+        
+        # Score: how close to good range (1.0 = perfect, 0.0 = very bad)
+        if neck_in_range:
+            s_neck = 1.0
+        else:
+            if neck_angle < NECK_FORWARD_MAX:
+                # Forward leaning: use forward tolerance
+                dist = NECK_FORWARD_MAX - neck_angle
+                s_neck = max(0, 1 - dist / NECK_FORWARD_TOLERANCE)
+            else:  # neck_angle > NECK_BACKWARD_MIN
+                # Backward leaning: use backward tolerance
+                dist = neck_angle - NECK_BACKWARD_MIN
+                s_neck = max(0, 1 - dist / NECK_BACKWARD_TOLERANCE)
+        
+        if torso_in_range:
+            s_torso = 1.0
+        else:
+            if torso_angle < TORSO_FORWARD_MAX:
+                # Slouching: use forward tolerance
+                dist = TORSO_FORWARD_MAX - torso_angle
+                s_torso = max(0, 1 - dist / TORSO_FORWARD_TOLERANCE)
+            else:  # torso_angle > TORSO_BACKWARD_MIN
+                # Leaning back: use backward tolerance
+                dist = torso_angle - TORSO_BACKWARD_MIN
+                s_torso = max(0, 1 - dist / TORSO_BACKWARD_TOLERANCE)
         score = (W_NECK * s_neck + W_TORSO * s_torso) * 100
-        classification = "GOOD" if score >= 60 else "BAD"
+        classification = "GOOD" if score >= 70 else "BAD"
         
         # Determine reasons for bad posture
         reasons = []
-        if abs(neck_deviation) > NECK_ANGLE_THRESH:
-            reasons.append(f"Neck Slouch ({abs(neck_deviation):.1f}°)")
-        if abs(torso_deviation) > TORSO_ANGLE_THRESH:
-            reasons.append(f"Torso Slouch ({abs(torso_deviation):.1f}°)")
+        if not neck_in_range:
+            if neck_angle < NECK_FORWARD_MAX:
+                reasons.append(f"Neck Forward (angle: {neck_angle:.1f}°)")
+            else:
+                reasons.append(f"Neck Back (angle: {neck_angle:.1f}°)")
+        if not torso_in_range:
+            if torso_angle < TORSO_FORWARD_MAX:
+                reasons.append(f"Torso Slouched (angle: {torso_angle:.1f}°)")
+            else:
+                reasons.append(f"Torso Leaning Back (angle: {torso_angle:.1f}°)")
         
         # Bad posture alert
-        bad = score < 60
+        bad = score < 70
         if bad:
             self.bad_start = self.bad_start or now
         else:
@@ -241,9 +287,7 @@ class PostureMonitor:
             "subscores": {"Neck": s_neck * 100, "Torso": s_torso * 100},
             "reasons": reasons,
             "neck_angle": neck_angle,
-            "neck_deviation": neck_deviation,
             "torso_angle": torso_angle,
-            "torso_deviation": torso_deviation,
             "eye_ear_shoulder_angle": eye_ear_shoulder_angle
         }
         
@@ -299,7 +343,10 @@ def main():
     frame_size = WIDTH * HEIGHT * 3 // 2  # YUV420
     
     print("\nSide Camera Posture Monitor started")
-    print("Press 'q' to quit, 's' to save screenshot, 'c' to recalibrate\n")
+    print("Using absolute angle thresholds (no calibration needed)")
+    print(f"Good neck angle range: {NECK_FORWARD_MAX}-{NECK_BACKWARD_MIN}° (tolerance: -{NECK_FORWARD_TOLERANCE}/+{NECK_BACKWARD_TOLERANCE})")
+    print(f"Good torso angle range: {TORSO_FORWARD_MAX}-{TORSO_BACKWARD_MIN}° (tolerance: ±{TORSO_FORWARD_TOLERANCE})")
+    print("Press Ctrl+C to stop\n")
     
     frame_count = 0
     start_time = time.time()
@@ -360,7 +407,7 @@ def main():
                     # Label the point
                     label = f"{name.upper()}"
                     cv2.putText(frame, label, (px + 15, py + 5), 
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             
             # Draw lines connecting key points
             # Neck line: ear-shoulder-hip
@@ -400,8 +447,8 @@ def main():
                 draw_text(frame, f"Status: {data['classification']}", 10, 60, color, 0.7)
                 
                 # Show angles
-                draw_text(frame, f"Neck: {data['neck_angle']:.1f}deg ({data['neck_deviation']:+.1f})", 10, 95, (255, 255, 255), 0.5)
-                draw_text(frame, f"Torso: {data['torso_angle']:.1f}deg ({data['torso_deviation']:+.1f})", 10, 115, (255, 255, 255), 0.5)
+                draw_text(frame, f"Neck: {data['neck_angle']:.1f}deg (range: {NECK_FORWARD_MAX}-{NECK_BACKWARD_MIN})", 10, 95, (255, 255, 255), 0.5)
+                draw_text(frame, f"Torso: {data['torso_angle']:.1f}deg (range: {TORSO_FORWARD_MAX}-{TORSO_BACKWARD_MIN})", 10, 115, (255, 255, 255), 0.5)
                 draw_text(frame, f"Focus: {data['eye_ear_shoulder_angle']:.1f}deg", 10, 135, (255, 255, 255), 0.5)
                 
                 # Show subscores
@@ -436,7 +483,7 @@ def main():
                 y_coord += 18
                 conf_str = f"{kp[2]:.2f}" if kp[2] > MIN_KP_CONF else "LOW"
                 draw_text(frame, f"{name}: ({kp[0]:.2f},{kp[1]:.2f}) [{conf_str}]", 
-                         WIDTH - 200, y_coord, kp_colors[name], 0.4)
+                            WIDTH - 200, y_coord, kp_colors[name], 0.4)
             
             # Display frame
             cv2.imshow("Side Camera Posture Monitor", frame)
