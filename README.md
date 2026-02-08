@@ -1,6 +1,6 @@
 # 🧘 Atlas: A Smart Posture Monitor
 
-![Atlas Logo](images/atlas.png)
+![Atlas Logo](images/banner.png)
 
 Atlas is a real-time posture monitoring and analysis system designed for edge devices, featuring AI-powered pose detection on Raspberry Pi and a comprehensive mobile dashboard for tracking your posture health. Appropriately named after the Titan of Greek mythology who carried the world upon his shoulders, the system serves as a digital guardian for spinal alignment and ergonomic health.
 
